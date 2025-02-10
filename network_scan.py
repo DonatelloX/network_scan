@@ -8,6 +8,7 @@ import threading
 import os
 import platform
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 import psutil
@@ -57,7 +58,7 @@ REQUIRED_LIBRARIES = {
     "tabulate": "tabulate",
 }
 
-MAX_WORKERS = 200
+MAX_WORKERS = 500   # Increased number of threads for faster scanning
 SCAN_TIMEOUT = 1
 
 def install_libraries():
@@ -91,8 +92,10 @@ def check_and_install():
 def system_ping(ip: str) -> bool:
     system_name = platform.system().lower()
     if system_name == 'windows':
-        command = ['ping', '-n', '1', '-w', '1000', ip]
+        # -n 1: send 1 echo request, -w 500: wait 500ms for reply
+        command = ['ping', '-n', '1', '-w', '500', ip]
     else:
+        # -c 1: send 1 echo request, -W 1: wait 1 second for reply
         command = ['ping', '-c', '1', '-W', '1', ip]
     try:
         result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -178,10 +181,15 @@ class NetworkScanner:
             logger.error(f"Error configuring network: {e}")
             sys.exit(1)
 
-    def ping_host(self, ip: str) -> bool:
-        return system_ping(ip)
+    def ping_host(self, ip: str) -> (bool, float):
+        """Ping host and measure response time in ms."""
+        start_time = time.perf_counter()
+        alive = system_ping(ip)
+        end_time = time.perf_counter()
+        response_time = round((end_time - start_time) * 1000, 2) if alive else None
+        return alive, response_time
 
-    def scan_network(self, network: ipaddress.IPv4Network, detail_level: int) -> List[Dict]:
+    def scan_network(self, network: ipaddress.IPv4Network) -> List[Dict]:
         self.terminate_scan.clear()
         hosts = []
         try:
@@ -197,9 +205,9 @@ class NetworkScanner:
                         break
                     ip_str = str(futures[future])
                     try:
-                        alive = future.result()
+                        alive, response_time = future.result()
                         if alive:
-                            host_info = {"IP": ip_str}
+                            host_info = {"IP": ip_str, "Response Time": response_time}
                             host_info["Hostname"] = self.resolve_hostname(ip_str)
                             hosts.append(host_info)
                     except Exception as e:
@@ -234,8 +242,6 @@ def main():
     parser = argparse.ArgumentParser(description="Advanced Network Scanner")
     parser.add_argument('--install', action='store_true', help="Install missing libraries then exit.")
     parser.add_argument('-i', '--interface', help="Name of the network interface to use (e.g., eth0, Wi-Fi, etc.)")
-    parser.add_argument('-d', '--detail', type=int, choices=[1, 2, 3], default=3,
-                        help="Detail level (1=Basic, 2=Intermediate, 3=Detailed). Default: 3")
     args = parser.parse_args()
     if args.install:
         check_and_install()
@@ -252,7 +258,8 @@ def main():
             sys.exit(1)
     else:
         logger.info("\nAvailable interfaces:\n")
-        table = [[idx, i['interface'], i['status'], "\n".join(f"{ip_['address']}/{ip_['netmask']}" for ip_ in i['ips'])] for idx, i in enumerate(interfaces)]
+        table = [[idx, i['interface'], i['status'], "\n".join(f"{ip_['address']}/{ip_['netmask']}" for ip_ in i['ips'])]
+                 for idx, i in enumerate(interfaces)]
         logger.info(tabulate(table, headers=["Index", "Interface", "Status", "IP/Mask"], tablefmt="grid"))
         if len(interfaces) < 10:
             logger.info("\nSelect the interface index to use (press the corresponding key): ")
@@ -276,14 +283,25 @@ def main():
     network = scanner.calculate_network(ip_info['address'], ip_info['netmask'])
     logger.info(f"\nStarting scan on network {network} using interface '{selected['interface']}'...")
     logger.info("Press Ctrl+C to stop the scan.\n")
-    results = scanner.scan_network(network, args.detail)
+    results = scanner.scan_network(network)
+    
     arp_table = parse_arp_table()
     for host in results:
         mac_info = get_mac_info_from_arp(host["IP"], arp_table, scanner.mac_lookup)
         host.update(mac_info)
+    
     results.sort(key=lambda host: ipaddress.IPv4Address(host["IP"]))
-    headers = ["IP Address", "Hostname", "MAC Address", "Vendor"]
-    data = [[host["IP"], host.get("Hostname", "N/A"), host.get("MAC", "N/A"), host.get("Vendor", "Unknown")] for host in results]
+    
+    # Combine IP and MAC in one cell with newline separation
+    data = []
+    for host in results:
+        ip_mac = f"{host['IP']}\n{host.get('MAC', 'N/A')}"
+        hostname = host.get("Hostname", "N/A")
+        response_time = host.get("Response Time", "N/A")
+        vendor = host.get("Vendor", "Unknown")
+        data.append([ip_mac, hostname, response_time, vendor])
+    
+    headers = ["IP / MAC", "Hostname", "Response Time (ms)", "Vendor"]
     logger.info("\n" + tabulate(data, headers=headers, tablefmt="grid"))
     logger.info(f"\nFound {len(results)} active devices.")
 
