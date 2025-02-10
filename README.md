@@ -7,7 +7,7 @@ To ensure all required libraries are installed, you can run the following comman
 
 Alternatively, you can use the script’s built-in installation feature:
 
-```python script.py --install```
+```python network_scan.py --install```
 
 This will automatically check and install any missing dependencies.
 
@@ -22,6 +22,6 @@ The script supports several command-line options:
 
 *Example usage:*
 
-```python script.py -i eth0 -d 3```
+```python network_scan.py -i eth0 -d 3```
 
 If no interface is specified, the script lists available interfaces and allows selection.
