@@ -18,10 +18,8 @@ The script supports several command-line options:
 
 ```-i```, --interface → Specifies the network interface to use (e.g., eth0, Wi-Fi).
 
-```-d```, --detail → Sets the scan detail level (1 = Basic, 2 = Intermediate, 3 = Full).
-
 *Example usage:*
 
-```python network_scan.py -i eth0 -d 3```
+```python network_scan.py -i eth0```
 
 If no interface is specified, the script lists available interfaces and allows selection.
